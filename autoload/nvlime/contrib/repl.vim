@@ -40,10 +40,14 @@ endfunction
 " results wrap to the REPL window. It defaults to the width of that window,
 " via @function(nvlime#ui#ResultWindowWidth).
 "
+" [echo] is written to the REPL when the evaluation starts. If [queue] is
+" not v:null, the evaluation waits until the REPL thread is free, showing
+" [queue] meanwhile. See @function(nvlime#ui#transcript#Send).
+"
 " This method needs the SWANK-REPL contrib module. See
 " @function(NvlimeConnection.SwankRequire).
 function! nvlime#contrib#repl#ListenerEval(expr, Callback = v:null,
-      \ width = v:null) dict
+      \ width = v:null, echo = v:null, queue = v:null) dict
   function! s:ListenerEvalCB(conn, Cb, chan, msg) abort
     let stat = s:CheckAndReportReturnStatus(a:conn, a:msg,
           \ 'nvlime#contrib#repl#ListenerEval')
@@ -53,10 +57,11 @@ function! nvlime#contrib#repl#ListenerEval(expr, Callback = v:null,
   endfunction
 
   let width = a:width is v:null ? nvlime#ui#ResultWindowWidth() : a:width
-  call self.Send(self.EmacsRex(
+  call nvlime#ui#transcript#Send(self, self.EmacsRex(
         \ [nvlime#SYM('SWANK-REPL', 'LISTENER-EVAL'), a:expr,
         \ nvlime#KW('WINDOW-WIDTH'), width]),
-        \ function('s:ListenerEvalCB', [self, a:Callback]))
+        \ function('s:ListenerEvalCB', [self, a:Callback]),
+        \ a:echo, a:queue)
 endfunction
 
 function! nvlime#contrib#repl#Init(conn)

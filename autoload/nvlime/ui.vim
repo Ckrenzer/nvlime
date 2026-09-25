@@ -123,6 +123,7 @@ function! nvlime#ui#SetCurrentThread(thread, buf = '%') dict
 endfunction
 
 function! nvlime#ui#OnDebug(conn, thread, level, condition, restarts, frames, conts) dict
+  call nvlime#ui#transcript#OnDebug(a:conn, a:thread, a:level, a:conts)
   let [_, bufnr] = luaeval('require"nvlime.window.main.sldb".open(_A[1], _A[2])',
         \ [[], { 'conn-name': a:conn.cb_data.name, 'thread': a:thread,
                \ 'frames': a:frames, 'level': a:level }])
@@ -141,6 +142,7 @@ function! nvlime#ui#OnDebugActivate(conn, thread, level, select) dict
 endfunction
 
 function! nvlime#ui#OnDebugReturn(conn, thread, level, stepping) dict
+  call nvlime#ui#transcript#OnDebugReturn(a:conn, a:thread, a:level)
   call luaeval('require"nvlime.window.main.sldb"["on-debug-return"](_A)',
         \ { 'conn-name': a:conn.cb_data.name, 'thread': a:thread,
         \ 'level': a:level })
@@ -155,6 +157,7 @@ endfunction
 function! nvlime#ui#OnWriteString(conn, str, str_type, thread = v:null) dict
   let [_, bufnr] = luaeval('require"nvlime.window.main.repl".open(_A[1], _A[2])',
         \ [a:str, { 'conn-name': a:conn.cb_data.name }])
+  call nvlime#ui#transcript#Redraw(bufnr, a:conn)
   if a:thread isnot v:null
     " new as per slime 78ad57b7455be3f34a38da456183ddf8d604bdf8
     call a:conn.Send([nvlime#KW('NVLIME-RAW-MSG'), '(:WRITE-DONE ' .. a:thread .. ')'])
@@ -261,17 +264,21 @@ function! nvlime#ui#CurChar()
 endfunction
 
 ""
+" @usage [return_pos]
 " @public
 "
 " If there is a parentheses-enclosed expression under the cursor, return it.
 " Otherwise look for an atom under the cursor. Return an empty string if
 " nothing is found.
-function! nvlime#ui#CurExprOrAtom()
-  let str = nvlime#ui#CurExpr()
+" If [return_pos] is specified and |TRUE|, return a list containing the text,
+" as well as its beginning and ending positions, as @function(nvlime#ui#CurExpr)
+" does. An atom's positions are v:null.
+function! nvlime#ui#CurExprOrAtom(return_pos = v:false)
+  let [str, from_pos, to_pos] = nvlime#ui#CurExpr(v:true)
   if len(str) <= 0
-    let str = nvlime#ui#CurAtom()
+    let [str, from_pos, to_pos] = [nvlime#ui#CurAtom(), v:null, v:null]
   endif
-  return str
+  return a:return_pos ? [str, from_pos, to_pos] : str
 endfunction
 
 ""

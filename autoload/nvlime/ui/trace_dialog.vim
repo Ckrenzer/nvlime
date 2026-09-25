@@ -73,12 +73,14 @@ function! nvlime#ui#trace_dialog#Select(...)
             \ {c, r -> c.ui.OnInspect(c, r, v:null, v:null)})
     elseif action == 'to_repl'
       let part_type = (coord['type'] == 'TRACE-ENTRY-ARG') ? ':arg' : ':retval'
-      call b:nvlime_conn.ui.OnWriteString(b:nvlime_conn,
-            \ "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
       let args_str = join([coord['id'][0], coord['id'][1], part_type])
+      " The separator is written when the evaluation starts, so that it
+      " lands above the value.
       call b:nvlime_conn.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
             \ function(b:nvlime_conn.ListenerEval,
-            \ ['(nth-value 0 (swank-trace-dialog:find-trace-part ' . args_str . '))']))
+            \ ['(nth-value 0 (swank-trace-dialog:find-trace-part ' . args_str . '))',
+            \ v:null, v:null,
+            \ [["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}]]]))
     endif
   endif
 endfunction

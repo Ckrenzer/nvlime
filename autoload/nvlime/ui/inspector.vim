@@ -43,19 +43,22 @@ function! nvlime#ui#inspector#SendCurValueToREPL()
     return
   endif
 
-  call b:nvlime_conn.ui.OnWriteString(b:nvlime_conn,
-        \ "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
   call b:nvlime_conn.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
         \ function(b:nvlime_conn.ListenerEval,
-        \ ['(nth-value 0 (swank:inspector-nth-part ' . coord['id'] . '))']))
+        \ ['(nth-value 0 (swank:inspector-nth-part ' . coord['id'] . '))',
+        \ v:null, v:null, s:REPLSeparator()]))
 endfunction
 
 function! nvlime#ui#inspector#SendCurInspecteeToREPL()
-  call b:nvlime_conn.ui.OnWriteString(b:nvlime_conn,
-        \ "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
   call b:nvlime_conn.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
         \ function(b:nvlime_conn.ListenerEval,
-        \ ['(swank::istate.object swank::*istate*)']))
+        \ ['(swank::istate.object swank::*istate*)',
+        \ v:null, v:null, s:REPLSeparator()]))
+endfunction
+
+" Written when the evaluation starts, so that it lands above the value
+function! s:REPLSeparator()
+  return [["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}]]
 endfunction
 
 function! nvlime#ui#inspector#FindSource(type, edit_cmd = 'hide edit')

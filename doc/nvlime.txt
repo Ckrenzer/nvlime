@@ -274,6 +274,24 @@ Note: It's a design decision to make the REPL buffer read-only, since
       emulating a command line in Neovim buffers is often complicated
       and buggy.
 
+The REPL buffer keeps a transcript of what was sent. Each expression
+appears in full after a prompt naming the package it is evaluated in,
+e.g. `CL-USER> (+ 1 2)`, with its output and values below it. Text sent
+from the middle of a line keeps the shape it has in the source buffer.
+A `--` line separates the entries. Code evaluated in a debugger frame
+appears under a `; eval in frame N (...)` line, and compiling or
+loading shows `; compile:` with the code, or the name of the file.
+
+Expressions sent while the REPL is busy, or while the debugger is
+open, wait their turn. They are shown dimmed below the last line of
+the REPL buffer (highlight group `nvlime_replHeld`) and sent one at a
+time, each once the one before it has returned. If that one is
+aborted, e.g. by leaving the debugger with ABORT, the waiting ones are
+dropped, and a `; canceled:` line is left for each. Continuing from
+the debugger lets them run once the interrupted evaluation returns.
+Evaluations in debugger frames, and values sent to the REPL from the
+inspector or the trace dialog, don't wait.
+
 When the REPL needs user input, e.g. (read) or (read-line) is being
 evaluated, a dedicated window for string input would pop up. Write
 the input inside this buffer, and hit <CR> in normal mode, then the

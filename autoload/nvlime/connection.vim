@@ -21,6 +21,7 @@ endfunction
 function! nvlime#connection#Close(conn)
   let conn_id = s:NormalizeConnectionID(a:conn)
   let r_conn = remove(s:nvlime_connections, conn_id)
+  call nvlime#ui#transcript#OnClose(r_conn)
   call r_conn.Close()
 endfunction
 

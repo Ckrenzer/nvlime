@@ -40,6 +40,7 @@ function! nvlime#async#ch_sendexpr(chan, expr, Callback)
     endif
     call s:IncMsgID(a:chan)
   endif
+  return msg[0]
 endfunction
 
 

@@ -197,9 +197,10 @@ endfunction
 " @public
 "
 " Send a message {msg} to the server, and optionally register an async
-" [callback] function to handle the reply.
+" [callback] function to handle the reply. Return the id of the message,
+" which the server also uses for an :EMACS-REX request.
 function! nvlime#Send(msg, Callback = v:null) dict
-  call nvlime#async#ch_sendexpr(self.channel, a:msg, a:Callback)
+  return nvlime#async#ch_sendexpr(self.channel, a:msg, a:Callback)
 endfunction
 
 ""
@@ -688,17 +689,21 @@ endfunction
 " SWANK:EVAL-STRING-IN-FRAME. When either is omitted they are sized to the
 " window the result will be written to, via
 " @function(nvlime#ui#ValueFormatSize).
+"
+" [echo] is written to the REPL when the evaluation starts, see
+" @function(nvlime#ui#transcript#Send).
 function! nvlime#EvalStringInFrame(str, frame, package, Callback = v:null,
-      \ lines = v:null, width = v:null) dict
+      \ lines = v:null, width = v:null, echo = v:null) dict
   let [def_lines, def_width] = nvlime#ui#ValueFormatSize()
   let lines = a:lines is v:null ? def_lines : a:lines
   let width = a:width is v:null ? def_width : a:width
 
-  call self.Send(self.EmacsRex(
+  call nvlime#ui#transcript#Send(self, self.EmacsRex(
         \ [s:SYM('SWANK', 'EVAL-STRING-IN-FRAME'),
         \ a:str, a:frame, a:package, lines, width]),
         \ function('nvlime#SimpleSendCB',
-        \ [self, a:Callback, 'nvlime#EvalStringInFrame']))
+        \ [self, a:Callback, 'nvlime#EvalStringInFrame']),
+        \ a:echo)
 endfunction
 
 ""

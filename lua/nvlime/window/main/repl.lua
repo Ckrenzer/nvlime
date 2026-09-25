@@ -64,7 +64,8 @@ repl.clear = function()
     local _ = _let_6_[1]
     local bufnr = _let_6_[2]
     clear_repl_2a(bufnr, conn)
-    return nvim_win_set_cursor(main.repl.id, {3, 0})
+    nvim_win_set_cursor(main.repl.id, {3, 0})
+    return vim.fn["nvlime#ui#transcript#Redraw"](bufnr)
   else
     return nil
   end

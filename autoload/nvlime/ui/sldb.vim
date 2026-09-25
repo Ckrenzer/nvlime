@@ -196,20 +196,38 @@ function! nvlime#ui#sldb#EvalStringInCurFrame()
         \ b:nvlime_conn, 'Eval in frame:',
         \ v:null,
         \ function('s:EvalStringInCurFrameInputComplete',
-        \ [nth, thread, b:nvlime_conn.GetCurrentPackage()[0]]))
+        \ [nth, thread, b:nvlime_conn.GetCurrentPackage()[0],
+        \ s:FrameEvalHeader(nth)]))
 endfunction
 
-function! s:EvalStringInCurFrameInputComplete(frame, thread, package)
+function! s:EvalStringInCurFrameInputComplete(frame, thread, package, header)
   let content = nvlime#ui#CurBufferContent()
   if len(content) > 0
     call b:nvlime_conn.WithThread(a:thread,
           \ function(b:nvlime_conn.EvalStringInFrame,
           \ [content, a:frame, a:package,
           \ {c, r -> c.ui.OnWriteString(c, r . "\n",
-          \ {'name': 'FRAME-EVAL-RESULT', 'package': 'KEYWORD'})}]))
+          \ {'name': 'FRAME-EVAL-RESULT', 'package': 'KEYWORD'})},
+          \ v:null, v:null, s:FrameEvalEcho(a:header, content)]))
   else
     call nvlime#ui#ErrMsg('Canceled.')
   endif
+endfunction
+
+" The line the REPL shows above code evaluated in frame {nth}, naming the
+" frame: '; eval in frame 1 (HI 10 20):'
+function! s:FrameEvalHeader(nth)
+  let frame = get(get(b:, 'nvlime_sldb_frames', []), a:nth, v:null)
+  let desc = (type(frame) == v:t_list && len(frame) > 1
+        \ && type(frame[1]) == v:t_string) ?
+        \ ' ' . substitute(frame[1], '\n', ' ', 'g') : ''
+  return '; eval in frame ' . a:nth . desc . ':'
+endfunction
+
+function! s:FrameEvalEcho(header, content)
+  return [["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}],
+        \ [a:header . "\n" . a:content . "\n",
+        \ {'name': 'FRAME-EVAL-INPUT', 'package': 'KEYWORD'}]]
 endfunction
 
 function! nvlime#ui#sldb#SendValueInCurFrameToREPL()
@@ -223,10 +241,12 @@ function! nvlime#ui#sldb#SendValueInCurFrameToREPL()
         \ b:nvlime_conn, 'Eval in frame and send result to REPL:',
         \ v:null,
         \ function('s:SendValueInCurFrameToREPLInputComplete',
-        \ [nth, thread, b:nvlime_conn.GetCurrentPackage()[0]]))
+        \ [nth, thread, b:nvlime_conn.GetCurrentPackage()[0],
+        \ s:FrameEvalHeader(nth)]))
 endfunction
 
-function! s:SendValueInCurFrameToREPLInputComplete(frame, thread, package)
+" The REPL shows the code as it was typed, not the SETF it is sent in.
+function! s:SendValueInCurFrameToREPLInputComplete(frame, thread, package, header)
   let content = nvlime#ui#CurBufferContent()
   if len(content) > 0
     call b:nvlime_conn.WithThread(a:thread,
@@ -235,7 +255,8 @@ function! s:SendValueInCurFrameToREPLInputComplete(frame, thread, package)
           \ a:frame, a:package,
           \ {c, r ->
           \ c.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
-          \ function(c.ListenerEval, ['cl-user::*']))}]))
+          \ function(c.ListenerEval, ['cl-user::*']))},
+          \ v:null, v:null, s:FrameEvalEcho(a:header, content)]))
   else
     call nvlime#ui#ErrMsg('Canceled.')
   endif

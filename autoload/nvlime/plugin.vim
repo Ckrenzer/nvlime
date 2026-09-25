@@ -239,10 +239,19 @@ endfunction
 "
 " Evaluate [content] in the REPL and show the result in the REPL buffer. If
 " [content] is omitted, or [edit] is present and |TRUE|, show an input buffer.
+" [content] can also be a list of the text and its beginning and ending
+" positions in the current buffer, as @function(nvlime#ui#CurExpr) returns
+" it. The REPL then shows the text with the indentation it has there.
 function! nvlime#plugin#SendToREPL(content = v:null, edit = v:false)
   let conn = nvlime#connection#Get()
   if conn isnot v:null
-    let [content, default] = s:InputCheckEditFlag(a:edit, a:content)
+    let content = a:content
+    " Pass on just the text when it is going into the input buffer, or when
+    " it is empty, so that an empty send still repeats the last input.
+    if type(content) == v:t_list && (a:edit || empty(content[0]))
+      let content = content[0]
+    endif
+    let [content, default] = s:InputCheckEditFlag(a:edit, content)
     call nvlime#ui#input#MaybeInput(
           \ content,
           \ function('s:SendToREPLInputComplete', [conn]),
@@ -440,8 +449,7 @@ function! nvlime#plugin#LoadFile(file_name = v:null, edit = v:false)
   endif
   call nvlime#ui#input#MaybeInput(
         \ file_name,
-        \ { fname ->
-        \ conn.LoadFile(fname, function('s:OnLoadFileComplete', [fname]))},
+        \ function('s:LoadFileInputComplete', [conn]),
         \ ' Load file ',
         \ default,
         \ v:null,
@@ -1022,8 +1030,8 @@ function! nvlime#plugin#InteractionMode(...)
   let enable = get(a:000, 0, !getbufvar(bufnr('%'), 'nvlime_interaction_mode', v:false))
   if enable
     let b:nvlime_interaction_mode = v:true
-    nnoremap <buffer> <silent> <cr> :call nvlime#plugin#SendToREPL(nvlime#ui#CurExprOrAtom())<cr>
-    vnoremap <buffer> <silent> <cr> :<c-u>call nvlime#plugin#SendToREPL(nvlime#ui#CurSelection())<cr>
+    nnoremap <buffer> <silent> <cr> :call nvlime#plugin#SendToREPL(nvlime#ui#CurExprOrAtom(v:true))<cr>
+    vnoremap <buffer> <silent> <cr> :<c-u>call nvlime#plugin#SendToREPL(nvlime#ui#CurSelection(v:true))<cr>
   else
     let b:nvlime_interaction_mode = v:false
     nnoremap <buffer> <cr> <cr>
@@ -1284,28 +1292,50 @@ function! s:ShowAsyncResult(conn, result)
   call luaeval('require"nvlime.window.macroexpand".open(_A)', a:result)
 endfunction
 
+" The REPL shows the code above its output and results, after a prompt
+" naming the package it is evaluated in, the way a terminal REPL does. The
+" code waits its turn if the REPL is busy or in the debugger.
 function! s:SendToREPLInputComplete(conn, content)
-  call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  if type(a:content) == v:t_list
+    let str = a:content[0]
+    let shown = nvlime#ui#transcript#Dedent(str, a:content[1])
+  else
+    let str = a:content
+    let shown = str
+  endif
+
+  let prompt = nvlime#ui#transcript#Prompt(a:conn)
+  let echo = [
+        \ ["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}],
+        \ [nvlime#ui#transcript#Prefix(prompt, shown) . "\n",
+        \ {'name': 'REPL-INPUT', 'package': 'KEYWORD'}]]
   call a:conn.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
-        \ function(a:conn.ListenerEval, [a:content, function('s:OnListenerEvalComplete')]))
+        \ function(a:conn.ListenerEval,
+        \ [str, function('s:OnListenerEvalComplete'), v:null, echo, shown]))
 endfunction
 
 function! s:CompileInputComplete(conn, win, policy, content)
   if type(a:content) == v:t_list
     let str = a:content[0]
     let [str_line, str_col] = a:content[1]
+    let shown = nvlime#ui#transcript#Dedent(str, a:content[1])
 
     let buf = bufnr('%')
     let cur_byte = line2byte(str_line) + str_col - 1
     let cur_file = expand('%:p')
   elseif type(a:content) == v:t_string
     let str = a:content
+    let shown = str
   endif
 
   let policy = a:policy isnot v:null ? a:policy :
         \ get(g:nvlime_options, 'compiler_policy', v:null)
 
+  " Compiling runs in a thread of its own, alongside the REPL thread, so
+  " there is no order to keep and the code is written right away.
   call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  call a:conn.ui.OnWriteString(a:conn, "; compile:\n" . shown . "\n",
+        \ {'name': 'COMPILE-INPUT', 'package': 'KEYWORD'})
 
   if type(a:content) == v:t_string
     call a:conn.CompileStringForEmacs(
@@ -1322,9 +1352,24 @@ function! s:CompileFileInputComplete(conn, win, policy, load, file_name)
   let policy = a:policy isnot v:null ? a:policy :
         \ get(g:nvlime_options, 'compiler_policy', v:null)
 
+  " Only the file name is sent. Lisp reads the file itself.
   call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  call a:conn.ui.OnWriteString(a:conn,
+        \ '; ' . (a:load ? 'compile and load' : 'compile') . ' file: '
+        \ . a:file_name . "\n",
+        \ {'name': 'COMPILE-INPUT', 'package': 'KEYWORD'})
   call a:conn.CompileFileForEmacs(a:file_name, a:load, policy,
         \ function('s:OnCompilationComplete', [a:win]))
+endfunction
+
+" Like compiling, loading runs in a thread of its own, so the file name is
+" written right away.
+function! s:LoadFileInputComplete(conn, file_name)
+  call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  call a:conn.ui.OnWriteString(a:conn, '; load file: ' . a:file_name . "\n",
+        \ {'name': 'LOAD-FILE-INPUT', 'package': 'KEYWORD'})
+  call a:conn.LoadFile(a:file_name,
+        \ function('s:OnLoadFileComplete', [a:file_name]))
 endfunction
 
 function! s:UninternSymbolInputComplete(conn, sym)
