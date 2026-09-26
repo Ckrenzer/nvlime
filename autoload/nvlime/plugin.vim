@@ -1304,14 +1304,16 @@ function! s:SendToREPLInputComplete(conn, content)
     let shown = str
   endif
 
-  let prompt = nvlime#ui#transcript#Prompt(a:conn)
-  let echo = [
+  " Built when the code starts, since the code before it may have changed
+  " the package the prompt names.
+  let conn = a:conn
+  let Echo = {-> [
         \ ["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}],
-        \ [nvlime#ui#transcript#Prefix(prompt, shown) . "\n",
-        \ {'name': 'REPL-INPUT', 'package': 'KEYWORD'}]]
+        \ [nvlime#ui#transcript#Prefix(nvlime#ui#transcript#Prompt(conn), shown)
+        \ . "\n", {'name': 'REPL-INPUT', 'package': 'KEYWORD'}]]}
   call a:conn.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
         \ function(a:conn.ListenerEval,
-        \ [str, function('s:OnListenerEvalComplete'), v:null, echo, shown]))
+        \ [str, function('s:OnListenerEvalComplete'), v:null, Echo, shown]))
 endfunction
 
 function! s:CompileInputComplete(conn, win, policy, content)

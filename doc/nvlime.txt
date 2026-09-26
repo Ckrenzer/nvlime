@@ -86,6 +86,8 @@ The Current Package                            *nvlime-current-package*
     as omni-completions, will use this value. Nvlime will try to figure
     out the current package automatically, but it's also possible to
     specify a package via `g:nvlime_mappings.lisp.normal.set_package`.
+    Code sent to the REPL is the exception: the REPL has a package of
+    its own, see |nvlime-repl|.
 
 ======================================================================
 3. Usage                                                 *nvlime-usage*
@@ -273,6 +275,13 @@ the input directly in the REPL buffer.
 Note: It's a design decision to make the REPL buffer read-only, since
       emulating a command line in Neovim buffers is often complicated
       and buggy.
+
+Like a terminal REPL, the REPL has a package of its own, which
+expressions sent to it are evaluated in, whichever buffer they come
+from. It starts as the package swank is in, normally
+`COMMON-LISP-USER`, and changes when something the REPL evaluates
+changes `*package*`, e.g. an `(in-package ...)` sent to it. Completion, argument lists and compiling keep using the package of
+the buffer, see |nvlime-current-package|.
 
 The REPL buffer keeps a transcript of what was sent. Each expression
 appears in full after a prompt naming the package it is evaluated in,

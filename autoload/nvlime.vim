@@ -421,14 +421,17 @@ endfunction
 " Construct an :EMACS-REX message, with the current package and the current
 " thread.
 " {cmd} should be a raw :EMACS-REX command.
-function! nvlime#EmacsRex(cmd) dict
-  let pkg_info = self.GetCurrentPackage()
+" [package], in the format @function(NvlimeConnection.GetCurrentPackage)
+" returns, and [thread] replace the current ones when given.
+function! nvlime#EmacsRex(cmd, package = v:null, thread = v:null) dict
+  let pkg_info = a:package isnot v:null ? a:package : self.GetCurrentPackage()
   if type(pkg_info) != v:t_list
     let pkg = v:null
   else
     let pkg = pkg_info[0]
   endif
-  return s:EmacsRex(a:cmd, pkg, self.GetCurrentThread())
+  return s:EmacsRex(a:cmd, pkg,
+        \ a:thread isnot v:null ? a:thread : self.GetCurrentThread())
 endfunction
 
 ""
@@ -1176,6 +1179,8 @@ endfunction
 
 function! nvlime#OnNewPackage(conn, msg)
   call a:conn.SetCurrentPackage([a:msg[1], a:msg[2]])
+  " Only the REPL sends this, when what it evaluated changed *PACKAGE*.
+  let a:conn['repl_package'] = [a:msg[1], a:msg[2]]
 endfunction
 
 function! nvlime#OnDebug(conn, msg)

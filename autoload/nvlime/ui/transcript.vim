@@ -26,6 +26,10 @@ let s:namespace = nvim_create_namespace('nvlime_repl_held')
 " @function(NvlimeConnection.Send). Return the id of the request, or v:null
 " if it is held.
 "
+" {msg} and {echo} can also be functions that return them, called when the
+" request is sent and when it starts. What they return then can depend on
+" the requests before, e.g. the prompt on the package the REPL is in.
+"
 " If {queue} is not v:null, the request is held until the REPL thread is
 " free, and dropped if the request before it is aborted. {queue} is then the
 " code as the REPL shows it, whose first line is shown while it is held.
@@ -35,28 +39,26 @@ let s:namespace = nvim_create_namespace('nvlime_repl_held')
 function! nvlime#ui#transcript#Send(conn, msg, Callback, echo = v:null,
       \ queue = v:null)
   if a:conn.ui is v:null
-    return a:conn.Send(a:msg, a:Callback)
+    return a:conn.Send(s:Resolve(a:msg), a:Callback)
   endif
 
   let entry = {'echo': a:echo, 'id': v:null, 'started': v:false}
   if !s:IsREPLThread(a:conn, a:conn.GetCurrentThread())
     call s:Write(a:conn, entry)
-    return a:conn.Send(a:msg, a:Callback)
+    return a:conn.Send(s:Resolve(a:msg), a:Callback)
   endif
 
   let state = s:State(a:conn)
   if a:queue isnot v:null
-    let summary = s:Summary(a:queue)
     call extend(entry, {'msg': a:msg, 'Callback': a:Callback,
-          \ 'summary': summary,
-          \ 'preview': nvlime#ui#transcript#Prompt(a:conn) . summary})
+          \ 'summary': s:Summary(a:queue)})
     call add(state.held, entry)
     call s:StartNext(a:conn)
     call s:RedrawConn(a:conn)
     return entry.id
   endif
 
-  let entry.id = a:conn.Send(a:msg,
+  let entry.id = a:conn.Send(s:Resolve(a:msg),
         \ function('s:OnReply', [a:conn, a:Callback, entry]))
   " A Send that handles the reply before it returns has started it already.
   if !entry.started
@@ -227,9 +229,11 @@ function! nvlime#ui#transcript#Redraw(bufnr, conn = v:null)
     return
   endif
   let last = nvim_buf_line_count(a:bufnr)
+  " The prompt as it would be if the request were sent now
+  let prompt = nvlime#ui#transcript#Prompt(conn)
   call nvim_buf_set_extmark(a:bufnr, s:namespace, last - 1, 0, {
         \ 'virt_lines': map(copy(state.held),
-        \ {_, e -> [[e.preview, 'nvlime_replHeld']]})})
+        \ {_, e -> [[prompt . e.summary, 'nvlime_replHeld']]})})
   " Scrolling to the last line leaves lines below it out of sight.
   for winid in win_findbuf(a:bufnr)
     if line('.', winid) == last
@@ -242,9 +246,10 @@ endfunction
 " @public
 "
 " Return the prompt the REPL shows in front of code sent to {conn}, naming
-" the package it is evaluated in: 'CL-USER> '
+" the package the REPL evaluates it in: 'CL-USER> '. See
+" @function(nvlime#contrib#repl#Package).
 function! nvlime#ui#transcript#Prompt(conn)
-  let pkg = a:conn.GetCurrentPackage()
+  let pkg = nvlime#contrib#repl#Package(a:conn)
   return (type(pkg) == v:t_list ? pkg[1] : '') . '> '
 endfunction
 
@@ -396,7 +401,7 @@ function! s:StartNext(conn)
     call s:Start(a:conn, state.sent[0])
   elseif !empty(state.held) && empty(state.suspended) && !state.unwinding
     let entry = remove(state.held, 0)
-    let entry.id = a:conn.Send(entry.msg,
+    let entry.id = a:conn.Send(s:Resolve(entry.msg),
           \ function('s:OnReply', [a:conn, entry.Callback, entry]))
     call s:Start(a:conn, entry)
     call s:RedrawConn(a:conn)
@@ -417,12 +422,18 @@ function! s:CancelHeld(conn)
 endfunction
 
 function! s:Write(conn, entry)
-  if a:entry.echo is v:null
+  let echo = s:Resolve(a:entry.echo)
+  if echo is v:null
     return
   endif
-  for [str, str_type] in a:entry.echo
+  for [str, str_type] in echo
     call a:conn.ui.OnWriteString(a:conn, str, str_type)
   endfor
+endfunction
+
+" {Value}, or what it returns if it is a function
+function! s:Resolve(Value)
+  return type(a:Value) == v:t_func ? a:Value() : a:Value
 endfunction
 
 function! s:RedrawConn(conn)
