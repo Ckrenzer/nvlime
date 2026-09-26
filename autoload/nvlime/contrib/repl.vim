@@ -67,7 +67,8 @@ endfunction
 function! nvlime#contrib#repl#Init(conn)
   let a:conn['CreateREPL'] = function('nvlime#contrib#repl#CreateREPL')
   let a:conn['ListenerEval'] = function('nvlime#contrib#repl#ListenerEval')
-  call a:conn.CreateREPL(v:null)
+  call a:conn.CreateREPL(v:null,
+        \ {conn, _ -> nvlime#ui#transcript#LearnREPLThread(conn)})
 endfunction
 
 function! s:CheckAndReportReturnStatus(conn, return_msg, caller)

@@ -535,6 +535,7 @@ endfunction
 "
 " When the debugger is active, invoke the ABORT restart.
 function! nvlime#SLDBAbort(Callback = v:null) dict
+  call nvlime#ui#transcript#OnInvokeRestart(self, 'ABORT')
   call self.Send(self.EmacsRex([s:SYM('SWANK', 'SLDB-ABORT')]),
         \ function('s:SLDBSendCB', [self, a:Callback, 'nvlime#SLDBAbort']))
 endfunction
@@ -556,6 +557,7 @@ endfunction
 "
 " When the debugger is active, invoke the CONTINUE restart.
 function! nvlime#SLDBContinue(Callback = v:null) dict
+  call nvlime#ui#transcript#OnInvokeRestart(self, 'CONTINUE')
   call self.Send(self.EmacsRex([s:SYM('SWANK', 'SLDB-CONTINUE')]),
         \ function('s:SLDBSendCB', [self, a:Callback, 'nvlime#SLDBContinue']))
 endfunction
@@ -624,6 +626,7 @@ endfunction
 " {restart} should be a valid restart number, and {level} a valid debugger
 " level.
 function! nvlime#InvokeNthRestartForEmacs(level, restart, Callback = v:null) dict
+  call nvlime#ui#transcript#OnInvokeRestart(self, a:restart, a:level)
   call self.Send(self.EmacsRex(
         \ [s:SYM('SWANK', 'INVOKE-NTH-RESTART-FOR-EMACS'), a:level, a:restart]),
         \ function('s:SLDBSendCB', [self, a:Callback, 'nvlime#InvokeNthRestartForEmacs']))

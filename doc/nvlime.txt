@@ -289,8 +289,10 @@ time, each once the one before it has returned. If that one is
 aborted, e.g. by leaving the debugger with ABORT, the waiting ones are
 dropped, and a `; canceled:` line is left for each. Continuing from
 the debugger lets them run once the interrupted evaluation returns.
-Evaluations in debugger frames, and values sent to the REPL from the
-inspector or the trace dialog, don't wait.
+When the debugger was opened by interrupting the REPL while it was
+idle, they run if it is left with CONTINUE, and are dropped if it is
+left any other way. Evaluations in debugger frames, and values sent
+to the REPL from the inspector or the trace dialog, don't wait.
 
 When the REPL needs user input, e.g. (read) or (read-line) is being
 evaluated, a dedicated window for string input would pop up. Write

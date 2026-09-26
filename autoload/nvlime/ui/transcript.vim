@@ -16,10 +16,6 @@
 
 let s:namespace = nvim_create_namespace('nvlime_repl_held')
 
-" Stands in for a request on the debugger stack when the REPL thread stopped
-" while running nothing of ours, e.g. it was interrupted while idle.
-let s:idle = {'echo': v:null, 'id': v:null, 'started': v:true}
-
 ""
 " @public
 "
@@ -77,8 +73,10 @@ endfunction
 " @public
 "
 " The debugger opened on {thread} at {level}. {conts} holds the ids of the
-" requests it interrupted, innermost first.
-function! nvlime#ui#transcript#OnDebug(conn, thread, level, conts)
+" requests it interrupted, innermost first. {restarts} are the restarts it
+" offers, as [name, description] lists.
+function! nvlime#ui#transcript#OnDebug(conn, thread, level, conts,
+      \ restarts = v:null)
   let state = s:State(a:conn)
   let running = state.running
   let on_repl_thread = state.thread isnot v:null && a:thread == state.thread
@@ -90,7 +88,12 @@ function! nvlime#ui#transcript#OnDebug(conn, thread, level, conts)
     let state.running = v:null
   elseif running is v:null && on_repl_thread && !state.unwinding
         \ && (empty(state.suspended) || state.suspended[-1][1] < a:level)
-    call add(state.suspended, [s:idle, a:level])
+    " The REPL thread stopped while running nothing of ours, e.g. it was
+    " interrupted while idle. This stands in for a request on the stack.
+    call add(state.suspended, [{'echo': v:null, 'id': v:null,
+          \ 'started': v:true, 'idle': v:true, 'continued': v:false,
+          \ 'restarts': type(a:restarts) == v:t_list ? a:restarts : []},
+          \ a:level])
     return
   elseif !(state.unwinding && on_repl_thread)
     return
@@ -108,19 +111,85 @@ endfunction
 " again, either to go on or to unwind and return.
 function! nvlime#ui#transcript#OnDebugReturn(conn, thread, level)
   let state = s:State(a:conn)
-  if empty(state.suspended) || state.thread is v:null
-        \ || a:thread != state.thread || state.suspended[-1][1] != a:level
+  if state.thread is v:null || a:thread != state.thread
+    return
+  endif
+  if a:level == 1
+    " One of the restarts aborts the thread, and swank starts another one
+    " for the next request, so the id may be stale now.
+    call nvlime#ui#transcript#LearnREPLThread(a:conn)
+  endif
+  if empty(state.suspended) || state.suspended[-1][1] != a:level
     return
   endif
 
   let entry = remove(state.suspended, -1)[0]
   let state.unwinding = v:false
-  if entry is s:idle
-    " Nothing of ours was stopped there, so the thread is free again.
+  if get(entry, 'idle', v:false)
+    " Nothing of ours was stopped there, so the thread is free again. Leaving
+    " the debugger by any restart but CONTINUE counts as an abort, as it
+    " would for a request of ours.
+    if !entry.continued && empty(state.suspended)
+      call s:CancelHeld(a:conn)
+    endif
     call s:StartNext(a:conn)
   else
     let state.running = entry
   endif
+endfunction
+
+""
+" @usage {conn} {restart} [level]
+" @public
+"
+" {restart} is being invoked in the debugger of the current thread of
+" {conn}: a restart name, or its index in the list the debugger offers.
+" Swank invokes it at the innermost level, and not at all when [level] is
+" given and isn't that level.
+"
+" When the REPL thread stopped while running nothing of ours, this is the
+" only way to know how its debugger is left: swank reports leaving it the
+" same way after a CONTINUE as after an ABORT.
+function! nvlime#ui#transcript#OnInvokeRestart(conn, restart, level = v:null)
+  if a:conn.ui is v:null || !s:IsREPLThread(a:conn, a:conn.GetCurrentThread())
+    return
+  endif
+  let state = s:State(a:conn)
+  if empty(state.suspended)
+    return
+  endif
+  let [entry, level] = state.suspended[-1]
+  if !get(entry, 'idle', v:false) || (a:level isnot v:null && a:level != level)
+    return
+  endif
+  let name = a:restart
+  if type(name) == v:t_number
+    let name = get(get(entry.restarts, name, []), 0, '')
+  endif
+  " swank marks the restart it quits the debugger with: '*ABORT'
+  let entry.continued = type(name) == v:t_string
+        \ && substitute(name, '^\*', '', '') ==# 'CONTINUE'
+endfunction
+
+""
+" @public
+"
+" Ask the REPL thread of {conn} for its id, the one the debugger names it
+" by. A request for the REPL thread doesn't name it, so without the id a
+" debugger on it can only be told apart once a request of ours has stopped
+" there.
+function! nvlime#ui#transcript#LearnREPLThread(conn)
+  if a:conn.ui is v:null
+    return
+  endif
+  " SWANK::CURRENT-THREAD-ID is internal, but it is what swank names the
+  " thread with in :DEBUG. The public SWANK:LIST-THREADS only has thread
+  " names, which don't tell two connections apart, and the REPL thread
+  " swank starts after the first one is killed has another name.
+  call a:conn.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
+        \ {-> a:conn.Send(
+        \ a:conn.EmacsRex([nvlime#SYM('SWANK', 'CURRENT-THREAD-ID')]),
+        \ function('s:OnREPLThreadId', [a:conn]))})
 endfunction
 
 ""
@@ -229,7 +298,9 @@ function! s:State(conn)
     " held: requests not sent yet, oldest first
     " suspended: [request, level] for each request stopped in the debugger,
     "   innermost last
-    " thread: the id of the REPL thread, once the debugger has shown it
+    " thread: the id of the REPL thread, asked for when the REPL is created
+    "   and again whenever the thread leaves the debugger, or learned from
+    "   the debugger stopping a request of ours
     " unwinding: a request aborted inside the debugger, and the debugger has
     "   not said yet which level the REPL thread is going back to
     " drawn: the held requests are shown in the REPL buffer
@@ -283,6 +354,17 @@ function! s:OnReply(conn, Callback, entry, chan, msg) abort
       call s:StartNext(a:conn)
     endif
   endtry
+endfunction
+
+function! s:OnREPLThreadId(conn, chan, msg)
+  if type(a:msg) == v:t_list && len(a:msg) > 1
+        \ && type(a:msg[1]) == v:t_list && len(a:msg[1]) > 1
+        \ && type(a:msg[1][0]) == v:t_dict
+        \ && get(a:msg[1][0], 'name', '') ==# 'OK'
+        \ && type(a:msg[1][1]) == v:t_number
+    let state = s:State(a:conn)
+    let state.thread = a:msg[1][1]
+  endif
 endfunction
 
 function! s:IsAbort(msg)

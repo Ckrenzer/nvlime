@@ -123,7 +123,8 @@ function! nvlime#ui#SetCurrentThread(thread, buf = '%') dict
 endfunction
 
 function! nvlime#ui#OnDebug(conn, thread, level, condition, restarts, frames, conts) dict
-  call nvlime#ui#transcript#OnDebug(a:conn, a:thread, a:level, a:conts)
+  call nvlime#ui#transcript#OnDebug(a:conn, a:thread, a:level, a:conts,
+        \ a:restarts)
   let [_, bufnr] = luaeval('require"nvlime.window.main.sldb".open(_A[1], _A[2])',
         \ [[], { 'conn-name': a:conn.cb_data.name, 'thread': a:thread,
                \ 'frames': a:frames, 'level': a:level }])
