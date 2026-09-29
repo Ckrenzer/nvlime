@@ -1292,6 +1292,11 @@ function! s:ShowAsyncResult(conn, result)
   call luaeval('require"nvlime.window.macroexpand".open(_A)', a:result)
 endfunction
 
+function! s:WriteSeparator(conn)
+  let [sep, sep_type] = nvlime#ui#transcript#Separator()
+  call a:conn.ui.OnWriteString(a:conn, sep, sep_type)
+endfunction
+
 " The REPL shows the code above its output and results, after a prompt
 " naming the package it is evaluated in, the way a terminal REPL does. The
 " code waits its turn if the REPL is busy or in the debugger.
@@ -1308,7 +1313,7 @@ function! s:SendToREPLInputComplete(conn, content)
   " the package the prompt names.
   let conn = a:conn
   let Echo = {-> [
-        \ ["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}],
+        \ nvlime#ui#transcript#Separator(),
         \ [nvlime#ui#transcript#Prefix(nvlime#ui#transcript#Prompt(conn), shown)
         \ . "\n", {'name': 'REPL-INPUT', 'package': 'KEYWORD'}]]}
   call a:conn.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
@@ -1335,7 +1340,7 @@ function! s:CompileInputComplete(conn, win, policy, content)
 
   " Compiling runs in a thread of its own, alongside the REPL thread, so
   " there is no order to keep and the code is written right away.
-  call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  call s:WriteSeparator(a:conn)
   call a:conn.ui.OnWriteString(a:conn, "; compile:\n" . shown . "\n",
         \ {'name': 'COMPILE-INPUT', 'package': 'KEYWORD'})
 
@@ -1355,7 +1360,7 @@ function! s:CompileFileInputComplete(conn, win, policy, load, file_name)
         \ get(g:nvlime_options, 'compiler_policy', v:null)
 
   " Only the file name is sent. Lisp reads the file itself.
-  call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  call s:WriteSeparator(a:conn)
   call a:conn.ui.OnWriteString(a:conn,
         \ '; ' . (a:load ? 'compile and load' : 'compile') . ' file: '
         \ . a:file_name . "\n",
@@ -1367,7 +1372,7 @@ endfunction
 " Like compiling, loading runs in a thread of its own, so the file name is
 " written right away.
 function! s:LoadFileInputComplete(conn, file_name)
-  call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  call s:WriteSeparator(a:conn)
   call a:conn.ui.OnWriteString(a:conn, '; load file: ' . a:file_name . "\n",
         \ {'name': 'LOAD-FILE-INPUT', 'package': 'KEYWORD'})
   call a:conn.LoadFile(a:file_name,

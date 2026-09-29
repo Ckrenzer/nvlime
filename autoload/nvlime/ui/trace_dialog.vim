@@ -80,7 +80,7 @@ function! nvlime#ui#trace_dialog#Select(...)
             \ function(b:nvlime_conn.ListenerEval,
             \ ['(nth-value 0 (swank-trace-dialog:find-trace-part ' . args_str . '))',
             \ v:null, v:null,
-            \ [["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}]]]))
+            \ [nvlime#ui#transcript#Separator()]]))
     endif
   endif
 endfunction

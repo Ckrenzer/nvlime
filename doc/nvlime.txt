@@ -287,9 +287,11 @@ The REPL buffer keeps a transcript of what was sent. Each expression
 appears in full after a prompt naming the package it is evaluated in,
 e.g. `CL-USER> (+ 1 2)`, with its output and values below it. Text sent
 from the middle of a line keeps the shape it has in the source buffer.
-A `--` line separates the entries. Code evaluated in a debugger frame
-appears under a `; eval in frame N (...)` line, and compiling or
-loading shows `; compile:` with the code, or the name of the file.
+A `--` line and an empty line separate the entries, so |{| and |}|
+move from one entry to the next (and stop at empty lines in the output
+too). Code evaluated in a debugger frame appears under a
+`; eval in frame N (...)` line, and compiling or loading shows
+`; compile:` with the code, or the name of the file.
 
 Expressions sent while the REPL is busy, or while the debugger is
 open, wait their turn. They are shown dimmed below the last line of

@@ -256,6 +256,17 @@ endfunction
 ""
 " @public
 "
+" Return the [str, str_type] pair the REPL writes above each entry: a `--`
+" line and an empty line, so that |{| and |}| move from one entry to the
+" next. {str} is a list of lines, since the empty line would be dropped from
+" the end of a string.
+function! nvlime#ui#transcript#Separator()
+  return [['--', ''], {'name': 'REPL-SEP', 'package': 'KEYWORD'}]
+endfunction
+
+""
+" @public
+"
 " Return {text} as the REPL shows it. {text} was cut out of the current
 " buffer starting at {from_pos}, a [line, col] list, so its first line lost
 " the text in front of it but the other lines kept their full indentation.

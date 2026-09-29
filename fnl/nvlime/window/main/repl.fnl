@@ -23,7 +23,7 @@
                        (.. "pid " data.pid ", "))
                    "remote " data.remote_host ":" data.remote_port)
         border (string.rep "=" (length banner))]
-    [banner border ""]))
+    [banner border]))
 
 ;;; BufNr ->
 (fn clear-repl* [bufnr conn]
@@ -61,7 +61,7 @@
       (let [[_ bufnr] (repl.open
                         "" {:conn-name conn.cb_data.name})]
         (clear-repl* bufnr conn)
-        (nvim_win_set_cursor main.repl.id [3 0])
+        (nvim_win_set_cursor main.repl.id [2 0])
         ;; code still waiting for its turn stays below the last line
         ((. vim.fn "nvlime#ui#transcript#Redraw") bufnr)))))
 

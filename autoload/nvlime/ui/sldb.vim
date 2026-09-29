@@ -225,7 +225,7 @@ function! s:FrameEvalHeader(nth)
 endfunction
 
 function! s:FrameEvalEcho(header, content)
-  return [["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}],
+  return [nvlime#ui#transcript#Separator(),
         \ [a:header . "\n" . a:content . "\n",
         \ {'name': 'FRAME-EVAL-INPUT', 'package': 'KEYWORD'}]]
 endfunction

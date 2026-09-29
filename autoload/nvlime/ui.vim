@@ -152,9 +152,9 @@ endfunction
 ""
 " @public
 "
-" Write an arbitrary string {str} to the REPL buffer.
-" {conn} should be a valid @dict(NvlimeConnection). {str_type} is currently
-" ignored.
+" Write an arbitrary string {str} to the REPL buffer, or a list of lines,
+" written as they are. {conn} should be a valid @dict(NvlimeConnection).
+" {str_type} is currently ignored.
 function! nvlime#ui#OnWriteString(conn, str, str_type, thread = v:null) dict
   let [_, bufnr] = luaeval('require"nvlime.window.main.repl".open(_A[1], _A[2])',
         \ [a:str, { 'conn-name': a:conn.cb_data.name }])

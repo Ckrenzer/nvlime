@@ -58,7 +58,7 @@ endfunction
 
 " Written when the evaluation starts, so that it lands above the value
 function! s:REPLSeparator()
-  return [["--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'}]]
+  return [nvlime#ui#transcript#Separator()]
 endfunction
 
 function! nvlime#ui#inspector#FindSource(type, edit_cmd = 'hide edit')
