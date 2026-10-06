@@ -3,8 +3,10 @@
 (local ut (require "nvlime.utilities"))
 (local pbuf (require "parsley.buffer"))
 (local pwin (require "parsley.window"))
-(local {: nvim_create_autocmd
-        : nvim_get_current_win}
+(local {: nvim_create_augroup
+        : nvim_create_autocmd
+        : nvim_get_current_win
+        : nvim_get_mode}
        vim.api)
 
 (local arglist {})
@@ -29,12 +31,24 @@
      :height height
      :focusable false}))
 
+;;; -> bool
+(fn insert-mode? []
+  (not= nil (: (. (nvim_get_mode) :mode) :match "^[iR]")))
+
 ;;; WinID ->
 (fn win-callback [winid]
   (window.set-opt winid "conceallevel" 2)
-  (nvim_create_autocmd "InsertLeave"
-    {:callback #(window.close-float winid)
-     :once true}))
+  ;; What closes the popup depends on the mode it opens in: leaving insert
+  ;; mode when it was opened while typing, or the next cursor move when it
+  ;; was asked for from normal mode. Recreating the group drops the
+  ;; handlers of the previous popup.
+  (let [group (nvim_create_augroup "nvlime-arglist" {:clear true})
+        close #(window.close-float winid)]
+    (if (insert-mode?)
+        (nvim_create_autocmd "InsertLeave"
+          {: group :callback close :once true})
+        (nvim_create_autocmd ["CursorMoved" "InsertEnter" "BufLeave" "WinLeave"]
+          {: group :callback close :once true}))))
 
 ;;; string -> [WinID BufNr]
 (fn arglist.show [content]

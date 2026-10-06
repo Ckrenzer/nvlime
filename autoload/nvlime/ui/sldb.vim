@@ -86,9 +86,9 @@ function! nvlime#ui#sldb#ShowFrameDetails()
 endfunction
 
 function! nvlime#ui#sldb#OpenFrameSource(edit_cmd = 'hide edit')
-  let nth = s:MatchFrame(v:true)
+  let nth = s:CurFrameNth()
   if nth < 0
-    let nth = 0
+    return
   endif
 
   let [win_to_go, count_specified] = nvlime#ui#ChooseWindowWithCount(v:null)
@@ -101,9 +101,9 @@ function! nvlime#ui#sldb#OpenFrameSource(edit_cmd = 'hide edit')
 endfunction
 
 function! nvlime#ui#sldb#FindSource(edit_cmd = 'hide edit')
-  let nth = s:MatchFrame()
+  let nth = s:CurFrameNth()
   if nth < 0
-    let nth = 0
+    return
   endif
 
   let [win_to_go, count_specified] = nvlime#ui#ChooseWindowWithCount(v:null)
@@ -117,7 +117,7 @@ function! nvlime#ui#sldb#FindSource(edit_cmd = 'hide edit')
 endfunction
 
 function! nvlime#ui#sldb#RestartCurFrame()
-  let nth = s:MatchFrame()
+  let nth = s:CurFrameNth()
   if nth >= 0 && nth < len(b:nvlime_sldb_frames)
     let frame = b:nvlime_sldb_frames[nth]
     if s:FrameRestartable(frame)
@@ -129,7 +129,9 @@ function! nvlime#ui#sldb#RestartCurFrame()
 endfunction
 
 function! nvlime#ui#sldb#StepCurOrLastFrame(opr)
-  let nth = s:MatchFrame()
+  " Unlike the commands below, this one falls back to frame 0 on purpose -
+  " stepping with no frame selected steps the innermost one.
+  let nth = s:MatchFrame(v:true)
   if nth < 0
     let nth = 0
   endif
@@ -150,7 +152,7 @@ endfunction
 
 function! nvlime#ui#sldb#InspectVarInCurFrame()
   let varname = s:MatchVarName()
-  let nth = s:MatchFrame(v:true)
+  let nth = s:CurFrameNth()
   if nth < 0
     return
   endif
@@ -184,9 +186,9 @@ function! s:InspectInCurFrameInputComplete(frame, thread)
 endfunction
 
 function! nvlime#ui#sldb#EvalStringInCurFrame()
-  let nth = s:MatchFrame()
+  let nth = s:CurFrameNth()
   if nth < 0
-    let nth = 0
+    return
   endif
 
   let thread = b:nvlime_conn.GetCurrentThread()
@@ -194,26 +196,44 @@ function! nvlime#ui#sldb#EvalStringInCurFrame()
         \ b:nvlime_conn, 'Eval in frame:',
         \ v:null,
         \ function('s:EvalStringInCurFrameInputComplete',
-        \ [nth, thread, b:nvlime_conn.GetCurrentPackage()[0]]))
+        \ [nth, thread, b:nvlime_conn.GetCurrentPackage()[0],
+        \ s:FrameEvalHeader(nth)]))
 endfunction
 
-function! s:EvalStringInCurFrameInputComplete(frame, thread, package)
+function! s:EvalStringInCurFrameInputComplete(frame, thread, package, header)
   let content = nvlime#ui#CurBufferContent()
   if len(content) > 0
     call b:nvlime_conn.WithThread(a:thread,
           \ function(b:nvlime_conn.EvalStringInFrame,
           \ [content, a:frame, a:package,
           \ {c, r -> c.ui.OnWriteString(c, r . "\n",
-          \ {'name': 'FRAME-EVAL-RESULT', 'package': 'KEYWORD'})}]))
+          \ {'name': 'FRAME-EVAL-RESULT', 'package': 'KEYWORD'})},
+          \ v:null, v:null, s:FrameEvalEcho(a:header, content)]))
   else
     call nvlime#ui#ErrMsg('Canceled.')
   endif
 endfunction
 
+" The line the REPL shows above code evaluated in frame {nth}, naming the
+" frame: '; eval in frame 1 (HI 10 20):'
+function! s:FrameEvalHeader(nth)
+  let frame = get(get(b:, 'nvlime_sldb_frames', []), a:nth, v:null)
+  let desc = (type(frame) == v:t_list && len(frame) > 1
+        \ && type(frame[1]) == v:t_string) ?
+        \ ' ' . substitute(frame[1], '\n', ' ', 'g') : ''
+  return '; eval in frame ' . a:nth . desc . ':'
+endfunction
+
+function! s:FrameEvalEcho(header, content)
+  return [nvlime#ui#transcript#Separator(),
+        \ [a:header . "\n" . a:content . "\n",
+        \ {'name': 'FRAME-EVAL-INPUT', 'package': 'KEYWORD'}]]
+endfunction
+
 function! nvlime#ui#sldb#SendValueInCurFrameToREPL()
-  let nth = s:MatchFrame()
+  let nth = s:CurFrameNth()
   if nth < 0
-    let nth = 0
+    return
   endif
 
   let thread = b:nvlime_conn.GetCurrentThread()
@@ -221,10 +241,12 @@ function! nvlime#ui#sldb#SendValueInCurFrameToREPL()
         \ b:nvlime_conn, 'Eval in frame and send result to REPL:',
         \ v:null,
         \ function('s:SendValueInCurFrameToREPLInputComplete',
-        \ [nth, thread, b:nvlime_conn.GetCurrentPackage()[0]]))
+        \ [nth, thread, b:nvlime_conn.GetCurrentPackage()[0],
+        \ s:FrameEvalHeader(nth)]))
 endfunction
 
-function! s:SendValueInCurFrameToREPLInputComplete(frame, thread, package)
+" The REPL shows the code as it was typed, not the SETF it is sent in.
+function! s:SendValueInCurFrameToREPLInputComplete(frame, thread, package, header)
   let content = nvlime#ui#CurBufferContent()
   if len(content) > 0
     call b:nvlime_conn.WithThread(a:thread,
@@ -233,16 +255,17 @@ function! s:SendValueInCurFrameToREPLInputComplete(frame, thread, package)
           \ a:frame, a:package,
           \ {c, r ->
           \ c.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
-          \ function(c.ListenerEval, ['cl-user::*']))}]))
+          \ function(c.ListenerEval, ['cl-user::*']))},
+          \ v:null, v:null, s:FrameEvalEcho(a:header, content)]))
   else
     call nvlime#ui#ErrMsg('Canceled.')
   endif
 endfunction
 
 function! nvlime#ui#sldb#DisassembleCurFrame()
-  let nth = s:MatchFrame()
+  let nth = s:CurFrameNth()
   if nth < 0
-    let nth = 0
+    return
   endif
 
   let thread = b:nvlime_conn.GetCurrentThread()
@@ -252,9 +275,9 @@ function! nvlime#ui#sldb#DisassembleCurFrame()
 endfunction
 
 function! nvlime#ui#sldb#ReturnFromCurFrame()
-  let nth = s:MatchFrame()
+  let nth = s:CurFrameNth()
   if nth < 0
-    let nth = 0
+    return
   endif
 
   let thread = b:nvlime_conn.GetCurrentThread()
@@ -345,7 +368,9 @@ function! s:MatchFrame(...)
 
   let line = getline('.')
   let fnd = s:MatchFrame_string(line)
-  if (fnd > 0) || (! srchBackwards)
+  " Frame 0 is a match like any other - without the >= the cursor sitting on
+  " its line would fall through to the backwards search below and miss it.
+  if (fnd >= 0) || (! srchBackwards)
     return fnd
   endif
 
@@ -357,6 +382,20 @@ function! s:MatchFrame(...)
 
   let line = getline(lnr)
   return s:MatchFrame_string(line)
+endfunction
+
+" The frame the cursor is in, or -1 when it isn't in one. Walks back out of
+" an expanded frame's locals to the frame line they belong to, and says when
+" there is no frame rather than quietly settling on frame 0: frame 0 is
+" swank's innermost frame, which is usually an internal one - for a type
+" error, SB-C::%COMPILE-TIME-TYPE-ERROR rather than the function the user was
+" reading - so acting on it silently looks like the command misbehaving.
+function! s:CurFrameNth()
+  let nth = s:MatchFrame(v:true)
+  if nth < 0
+    call nvlime#ui#ErrMsg('No frame under the cursor.')
+  endif
+  return nth
 endfunction
 
 function! s:ShowFrameLocalsCB(frame, restartable, line, conn, result)

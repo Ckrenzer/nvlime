@@ -8,6 +8,7 @@
 (local {: nvim_create_namespace
         : nvim_create_augroup
         : nvim_create_autocmd
+        : nvim_clear_autocmds
         : nvim_buf_clear_namespace
         : nvim_buf_set_extmark
         : nvim_get_current_win}
@@ -17,6 +18,8 @@
 
 (local +namespace+ (nvim_create_namespace
                      (buffer.gen-filetype buffer.names.input)))
+
+(local +augroup+ (nvim_create_augroup "nvlime-input" {:clear true}))
 
 ;;; {any} -> {any}
 (fn calc-opts [config]
@@ -91,12 +94,18 @@
                 #(buf-callback $))
         opts (calc-opts config)]
 
-    ;; this must be done to avoid blocking the debugger
-(nvim_create_autocmd ["WinClosed"]
-      {:group (nvim_create_augroup
-                "custom-callback" {})
+    ;; Only <CR> submits (nvlime#ui#input#FromBufferComplete). Closing the
+    ;; window any other way cancels the input, so every prompt ends with
+    ;; exactly one of the two, and a swank thread waiting on the answer is
+    ;; never left blocked.
+    (nvim_clear_autocmds {:group +augroup+ :buffer bufnr})
+    (nvim_create_autocmd "WinClosed"
+      {:group +augroup+
        :buffer bufnr
-       :callback #(vim.cmd "call nvlime#ui#input#FromBufferComplete()")})
+       :callback (fn []
+                   ((. vim.fn "nvlime#ui#input#FromBufferCancel") bufnr)
+                   ;; a truthy return value would delete the autocmd
+                   nil)})
 
     (show-history-extmark bufnr)
     (buffer.fill! bufnr lines)

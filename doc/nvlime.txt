@@ -86,6 +86,8 @@ The Current Package                            *nvlime-current-package*
     as omni-completions, will use this value. Nvlime will try to figure
     out the current package automatically, but it's also possible to
     specify a package via `g:nvlime_mappings.lisp.normal.set_package`.
+    Code sent to the REPL is the exception: the REPL has a package of
+    its own, see |nvlime-repl|.
 
 ======================================================================
 3. Usage                                                 *nvlime-usage*
@@ -274,6 +276,35 @@ Note: It's a design decision to make the REPL buffer read-only, since
       emulating a command line in Neovim buffers is often complicated
       and buggy.
 
+Like a terminal REPL, the REPL has a package of its own, which
+expressions sent to it are evaluated in, whichever buffer they come
+from. It starts as the package swank is in, normally
+`COMMON-LISP-USER`, and changes when something the REPL evaluates
+changes `*package*`, e.g. an `(in-package ...)` sent to it. Completion, argument lists and compiling keep using the package of
+the buffer, see |nvlime-current-package|.
+
+The REPL buffer keeps a transcript of what was sent. Each expression
+appears in full after a prompt naming the package it is evaluated in,
+e.g. `CL-USER> (+ 1 2)`, with its output and values below it. Text sent
+from the middle of a line keeps the shape it has in the source buffer.
+A `--` line and an empty line separate the entries, so |{| and |}|
+move from one entry to the next (and stop at empty lines in the output
+too). Code evaluated in a debugger frame appears under a
+`; eval in frame N (...)` line, and compiling or loading shows
+`; compile:` with the code, or the name of the file.
+
+Expressions sent while the REPL is busy, or while the debugger is
+open, wait their turn. They are shown dimmed below the last line of
+the REPL buffer (highlight group `nvlime_replHeld`) and sent one at a
+time, each once the one before it has returned. If that one is
+aborted, e.g. by leaving the debugger with ABORT, the waiting ones are
+dropped, and a `; canceled:` line is left for each. Continuing from
+the debugger lets them run once the interrupted evaluation returns.
+When the debugger was opened by interrupting the REPL while it was
+idle, they run if it is left with CONTINUE, and are dropped if it is
+left any other way. Evaluations in debugger frames, and values sent
+to the REPL from the inspector or the trace dialog, don't wait.
+
 When the REPL needs user input, e.g. (read) or (read-line) is being
 evaluated, a dedicated window for string input would pop up. Write
 the input inside this buffer, and hit <CR> in normal mode, then the
@@ -397,8 +428,15 @@ When Nvlime needs user input, a dedicated input window would pop up.
 One can use it to compose any text snippet in it, and then press <CR>
 in insert or normal mode to submit the snippet to Nvlime.
 
-If the operation that brought up the input buffer can be cancelled,
-submitting an empty snippet would usually cancel that operation.
+Closing the input window any other way, e.g. with `q` in normal mode,
+|:q|, or by moving to another window, cancels the operation. When the
+Lisp side is blocked waiting for the input, cancelling still answers
+it: a read from standard input is interrupted (which opens the
+debugger), and a minibuffer prompt gets NIL.
+
+For most prompts, submitting an empty snippet reuses the last item in
+the input history, which is shown greyed out in the empty window. With
+no history, it cancels.
 
 Submitted text snippets are remembered as a linear input history. You
 can move to the previous/next item in history with <C-p>/<C-n>. See

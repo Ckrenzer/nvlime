@@ -4,8 +4,10 @@ local ut = require("nvlime.utilities")
 local pbuf = require("parsley.buffer")
 local pwin = require("parsley.window")
 local _local_1_ = vim.api
+local nvim_create_augroup = _local_1_["nvim_create_augroup"]
 local nvim_create_autocmd = _local_1_["nvim_create_autocmd"]
 local nvim_get_current_win = _local_1_["nvim_get_current_win"]
+local nvim_get_mode = _local_1_["nvim_get_mode"]
 local arglist = {}
 local _2bbufname_2b = buffer["gen-name"](buffer.names.arglist)
 local _2bfiletype_2b = buffer["gen-filetype"](buffer.names.arglist)
@@ -23,12 +25,22 @@ local function calc_opts(args)
   end
   return {relative = "win", row = row, col = wininfo.textoff, width = width, height = height, focusable = false}
 end
+local function insert_mode_3f()
+  return (nil ~= nvim_get_mode().mode:match("^[iR]"))
+end
 local function win_callback(winid)
   window["set-opt"](winid, "conceallevel", 2)
+  local group = nvim_create_augroup("nvlime-arglist", {clear = true})
+  local close
   local function _3_()
     return window["close-float"](winid)
   end
-  return nvim_create_autocmd("InsertLeave", {callback = _3_, once = true})
+  close = _3_
+  if insert_mode_3f() then
+    return nvim_create_autocmd("InsertLeave", {group = group, callback = close, once = true})
+  else
+    return nvim_create_autocmd({"CursorMoved", "InsertEnter", "BufLeave", "WinLeave"}, {group = group, callback = close, once = true})
+  end
 end
 arglist.show = function(content)
   local lines = ut["text->lines"](content)

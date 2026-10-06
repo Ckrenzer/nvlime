@@ -44,12 +44,20 @@ end
 sldb["on-debug-return"] = function(config)
   local exists_3f, bufnr = pbuf["exists?"](buffer["gen-sldb-name"](config["conn-name"], config.thread))
   if exists_3f then
-    local buf_level = (nvim_buf_get_var(bufnr, "nvlime_sldb_level") or -1)
+    local has_level_3f, level = pcall(nvim_buf_get_var, bufnr, "nvlime_sldb_level")
+    local buf_level
+    if has_level_3f then
+      buf_level = level
+    else
+      buf_level = -1
+    end
     if (buf_level == config.level) then
       main.sldb["remove-buf"](main.sldb, bufnr)
       buffer["fill!"](bufnr, {})
       buffer["set-vars"](bufnr, {buflisted = false})
-      if not psl["empty?"](main.sldb.buffers) then
+      if not pwin["visible?"](main.sldb.id) then
+        return nil
+      elseif not psl["empty?"](main.sldb.buffers) then
         return nvim_win_set_buf(main.sldb.id, main.sldb.buffers[#main.sldb.buffers])
       else
         return nvim_win_close(main.sldb.id, true)

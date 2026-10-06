@@ -12,8 +12,13 @@ syntax region nvlime_replString start=+\m"+ skip=+\m\\\\\|\\"+ end=+\m"+
 syntax match nvlime_replNumber "-\=\(\.\d\+\|\d\+\(\.\d*\)\=\)\([dDeEfFlL][-+]\=\d\+\)\="
 syntax match nvlime_replNumber "-\=\(\d\+/\d\+\)"
 syntax match nvlime_replSeparator +\m^--$+
+" The package prompt in front of code sent to the REPL: 'CL-USER> '
+syntax match nvlime_replPrompt +\m^[[:upper:][:digit:]][^[:space:][:lower:]()"';`|#<>]*> +
 
 hi def link nvlime_replSeparator Comment
+hi def link nvlime_replPrompt Statement
+" Code waiting for its turn, shown below the last line
+hi def link nvlime_replHeld Comment
 hi def link nvlime_replObject Constant
 hi def link nvlime_replString String
 hi def link nvlime_replNumber Constant

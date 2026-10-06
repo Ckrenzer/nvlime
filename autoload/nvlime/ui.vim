@@ -123,6 +123,8 @@ function! nvlime#ui#SetCurrentThread(thread, buf = '%') dict
 endfunction
 
 function! nvlime#ui#OnDebug(conn, thread, level, condition, restarts, frames, conts) dict
+  call nvlime#ui#transcript#OnDebug(a:conn, a:thread, a:level, a:conts,
+        \ a:restarts)
   let [_, bufnr] = luaeval('require"nvlime.window.main.sldb".open(_A[1], _A[2])',
         \ [[], { 'conn-name': a:conn.cb_data.name, 'thread': a:thread,
                \ 'frames': a:frames, 'level': a:level }])
@@ -141,6 +143,7 @@ function! nvlime#ui#OnDebugActivate(conn, thread, level, select) dict
 endfunction
 
 function! nvlime#ui#OnDebugReturn(conn, thread, level, stepping) dict
+  call nvlime#ui#transcript#OnDebugReturn(a:conn, a:thread, a:level)
   call luaeval('require"nvlime.window.main.sldb"["on-debug-return"](_A)',
         \ { 'conn-name': a:conn.cb_data.name, 'thread': a:thread,
         \ 'level': a:level })
@@ -149,28 +152,37 @@ endfunction
 ""
 " @public
 "
-" Write an arbitrary string {str} to the REPL buffer.
-" {conn} should be a valid @dict(NvlimeConnection). {str_type} is currently
-" ignored.
+" Write an arbitrary string {str} to the REPL buffer, or a list of lines,
+" written as they are. {conn} should be a valid @dict(NvlimeConnection).
+" {str_type} is currently ignored.
 function! nvlime#ui#OnWriteString(conn, str, str_type, thread = v:null) dict
   let [_, bufnr] = luaeval('require"nvlime.window.main.repl".open(_A[1], _A[2])',
         \ [a:str, { 'conn-name': a:conn.cb_data.name }])
+  call nvlime#ui#transcript#Redraw(bufnr, a:conn)
   if a:thread isnot v:null
     " new as per slime 78ad57b7455be3f34a38da456183ddf8d604bdf8
     call a:conn.Send([nvlime#KW('NVLIME-RAW-MSG'), '(:WRITE-DONE ' .. a:thread .. ')'])
   endif
 endfunction
 
+" The Lisp thread is blocked until it gets an answer, so cancelling must
+" still send one. For a read from standard input, cancelling interrupts the
+" thread (SLIME's C-c C-c during a read does the same), which opens the
+" debugger inside the read.
 function! nvlime#ui#OnReadString(conn, thread, ttag) dict
   call nvlime#ui#input#FromBuffer(
         \ a:conn, 'Input string:', v:null,
-        \ function('s:ReadStringInputComplete', [a:thread, a:ttag]))
+        \ function('s:ReadStringInputComplete', [a:thread, a:ttag]),
+        \ { -> a:conn.Interrupt(a:thread)})
 endfunction
 
+" Cancelling returns NIL, which is how READ-FROM-MINIBUFFER-IN-EMACS says the
+" user aborted (an empty string means they entered nothing).
 function! nvlime#ui#OnReadFromMiniBuffer(conn, thread, ttag, prompt, init_val) dict
   call nvlime#ui#input#FromBuffer(
         \ a:conn, a:prompt, a:init_val,
-        \ function('s:ReturnMiniBufferContent', [a:thread, a:ttag]))
+        \ function('s:ReturnMiniBufferContent', [a:thread, a:ttag]),
+        \ { -> a:conn.Return(a:thread, a:ttag, v:null)})
 endfunction
 
 function! nvlime#ui#OnIndentationUpdate(conn, indent_info) dict
@@ -253,17 +265,21 @@ function! nvlime#ui#CurChar()
 endfunction
 
 ""
+" @usage [return_pos]
 " @public
 "
 " If there is a parentheses-enclosed expression under the cursor, return it.
 " Otherwise look for an atom under the cursor. Return an empty string if
 " nothing is found.
-function! nvlime#ui#CurExprOrAtom()
-  let str = nvlime#ui#CurExpr()
+" If [return_pos] is specified and |TRUE|, return a list containing the text,
+" as well as its beginning and ending positions, as @function(nvlime#ui#CurExpr)
+" does. An atom's positions are v:null.
+function! nvlime#ui#CurExprOrAtom(return_pos = v:false)
+  let [str, from_pos, to_pos] = nvlime#ui#CurExpr(v:true)
   if len(str) <= 0
-    let str = nvlime#ui#CurAtom()
+    let [str, from_pos, to_pos] = [nvlime#ui#CurAtom(), v:null, v:null]
   endif
-  return str
+  return a:return_pos ? [str, from_pos, to_pos] : str
 endfunction
 
 ""
@@ -855,7 +871,11 @@ endfunction
 " Show {content} in the arglist buffer. {conn} should be a
 " @dict(NvlimeConnection).
 function! nvlime#ui#ShowArgList(conn, content)
-  call luaeval('require"nvlime.window.arglist".show(_A)', a:content)
+  let [_, bufnr] = luaeval('require"nvlime.window.arglist".show(_A)', a:content)
+  " Record which connection the arglist came from. An open popup is only
+  " reused while it matches the current connection (see s:NeedToShowArgList()
+  " in autoload/nvlime/plugin.vim).
+  call setbufvar(bufnr, 'nvlime_conn', a:conn)
 endfunction
 
 ""
@@ -874,6 +894,65 @@ function! nvlime#ui#GetFiletypeWindowList(ft)
   endtry
 
   return winid_list
+endfunction
+
+" Below this, swank's print right margin stops being meaningful: it prints at
+" (width - 10), so a very narrow or momentarily zero-width window would ask
+" for a nonsensical margin.
+let s:min_value_width = 20
+let s:default_value_lines = 6
+
+""
+" @public
+"
+" Return the width available in the window nvlime writes evaluation results
+" into, minus the sign/number/fold columns. Falls back to the editor width
+" when no repl window is on screen.
+function! nvlime#ui#ResultWindowWidth()
+  " Deliberately avoids :windo, unlike @function(nvlime#ui#GetFiletypeWindowList):
+  " this runs from inside the input buffer's completion callback, where moving
+  " between windows would fire the WinLeave autocmd that closes the input
+  " float out from under us.
+  for winnr in range(1, winnr('$'))
+    if getbufvar(winbufnr(winnr), '&filetype') ==# 'nvlime_repl'
+      let wininfo = getwininfo(win_getid(winnr))
+      let textoff = len(wininfo) > 0 ? get(wininfo[0], 'textoff', 0) : 0
+      let width = winwidth(winnr) - textoff
+      if width > 0
+        return max([s:min_value_width, width])
+      endif
+    endif
+  endfor
+
+  return max([s:min_value_width, &columns])
+endfunction
+
+""
+" @public
+"
+" Return a [<lines>, <width>] pair describing how much room swank has when it
+" formats a value for display.
+"
+" swank's format-values-for-echo-area uses <width> as the print right margin
+" (less a small allowance), and <lines> * <width> as the character budget
+" before it truncates the printed value with " ... ". Sizing them to the
+" window the result is actually written to keeps that wrapping honest,
+" instead of guessing at a terminal width.
+"
+" <lines> comes from |g:nvlime_options.frame_eval.max_lines|.
+function! nvlime#ui#ValueFormatSize()
+  " Tolerate a malformed override: g:nvlime_options is deep-merged from the
+  " user's g:nvlime_config, so a scalar can land where a dict is expected.
+  let opts = get(g:, 'nvlime_options', {})
+  let frame_eval = type(opts) == v:t_dict ? get(opts, 'frame_eval', {}) : {}
+  let max_lines = type(frame_eval) == v:t_dict ?
+        \ get(frame_eval, 'max_lines', s:default_value_lines) :
+        \ s:default_value_lines
+  if type(max_lines) != v:t_number || max_lines < 1
+    let max_lines = s:default_value_lines
+  endif
+
+  return [max_lines, nvlime#ui#ResultWindowWidth()]
 endfunction
 
 ""

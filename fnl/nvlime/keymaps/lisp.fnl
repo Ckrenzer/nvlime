@@ -88,22 +88,22 @@
                     #(repl.clear)
                     "nvlime: Clear the REPL buffer")
   (km.buffer.normal lm.normal.repl.send_atom_expr
-                    "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurExprOrAtom())<CR>"
+                    "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurExprOrAtom(v:true))<CR>"
                     "nvlime: Send the expression/atom under the cursor to the REPL")
   (km.buffer.normal lm.normal.repl.send_atom
                     "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurAtom())<CR>"
                     "nvlime: Send the atom under the cursor to the REPL")
   (km.buffer.normal lm.normal.repl.send_expr
-                    "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurExpr())<CR>"
+                    "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurExpr(v:true))<CR>"
                     "nvlime: Send the expression under the cursor to the REPL")
   (km.buffer.normal lm.normal.repl.send_toplevel_expr
-                    "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurTopExpr())<CR>"
+                    "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurTopExpr(v:true))<CR>"
                     "nvlime: Send the top-level expression under the cursor to the REPL")
   (km.buffer.normal lm.normal.repl.prompt
                     "<Cmd>call nvlime#plugin#SendToREPL()<CR>"
                     "nvlime: Send a snippet to the REPL")
   (km.buffer.visual lm.visual.repl.send_selection
-                    "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurSelection())<CR>"
+                    "<Cmd>call nvlime#plugin#SendToREPL(nvlime#ui#CurSelection(v:true))<CR>"
                     "nvlime: Send the current selection to the REPL")
 
   (km.buffer.normal lm.normal.macro.expand

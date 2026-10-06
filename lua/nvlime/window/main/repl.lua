@@ -28,7 +28,7 @@ local function repl_banner(conn)
   end
   banner = ("SWANK " .. _2_() .. _3_() .. "remote " .. data.remote_host .. ":" .. data.remote_port)
   local border = string.rep("=", #banner)
-  return {banner, border, ""}
+  return {banner, border}
 end
 local function clear_repl_2a(bufnr, conn)
   presentations["coords"] = {}
@@ -64,7 +64,8 @@ repl.clear = function()
     local _ = _let_6_[1]
     local bufnr = _let_6_[2]
     clear_repl_2a(bufnr, conn)
-    return nvim_win_set_cursor(main.repl.id, {3, 0})
+    nvim_win_set_cursor(main.repl.id, {2, 0})
+    return vim.fn["nvlime#ui#transcript#Redraw"](bufnr)
   else
     return nil
   end

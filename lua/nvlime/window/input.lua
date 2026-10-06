@@ -7,11 +7,13 @@ local pwin = require("parsley.window")
 local nvim_create_namespace = vim.api.nvim_create_namespace
 local nvim_create_augroup = vim.api.nvim_create_augroup
 local nvim_create_autocmd = vim.api.nvim_create_autocmd
+local nvim_clear_autocmds = vim.api.nvim_clear_autocmds
 local nvim_buf_clear_namespace = vim.api.nvim_buf_clear_namespace
 local nvim_buf_set_extmark = vim.api.nvim_buf_set_extmark
 local nvim_get_current_win = vim.api.nvim_get_current_win
 local input = {}
 local _2bnamespace_2b = nvim_create_namespace(buffer["gen-filetype"](buffer.names.input))
+local _2baugroup_2b = nvim_create_augroup("nvlime-input", {clear = true})
 local function calc_opts(config)
   local border_len = 2
   local wininfo = pwin["get-info"](nvim_get_current_win())
@@ -70,10 +72,12 @@ input.open = function(content, config)
   end
   bufnr = buffer["create-if-not-exists"](buffer["gen-name"](config["conn-name"], buffer.names.input, config.prompt), false, _5_)
   local opts = calc_opts(config)
+  nvim_clear_autocmds({group = _2baugroup_2b, buffer = bufnr})
   local function _6_()
-    return vim.cmd("call nvlime#ui#input#FromBufferComplete()")
+    vim.fn["nvlime#ui#input#FromBufferCancel"](bufnr)
+    return nil
   end
-  nvim_create_autocmd({"WinClosed"}, {group = nvim_create_augroup("custom-callback", {}), buffer = bufnr, callback = _6_})
+  nvim_create_autocmd("WinClosed", {group = _2baugroup_2b, buffer = bufnr, callback = _6_})
   show_history_extmark(bufnr)
   buffer["fill!"](bufnr, lines)
   local winid

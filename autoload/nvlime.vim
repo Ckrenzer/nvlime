@@ -197,9 +197,10 @@ endfunction
 " @public
 "
 " Send a message {msg} to the server, and optionally register an async
-" [callback] function to handle the reply.
+" [callback] function to handle the reply. Return the id of the message,
+" which the server also uses for an :EMACS-REX request.
 function! nvlime#Send(msg, Callback = v:null) dict
-  call nvlime#async#ch_sendexpr(self.channel, a:msg, a:Callback)
+  return nvlime#async#ch_sendexpr(self.channel, a:msg, a:Callback)
 endfunction
 
 ""
@@ -420,14 +421,17 @@ endfunction
 " Construct an :EMACS-REX message, with the current package and the current
 " thread.
 " {cmd} should be a raw :EMACS-REX command.
-function! nvlime#EmacsRex(cmd) dict
-  let pkg_info = self.GetCurrentPackage()
+" [package], in the format @function(NvlimeConnection.GetCurrentPackage)
+" returns, and [thread] replace the current ones when given.
+function! nvlime#EmacsRex(cmd, package = v:null, thread = v:null) dict
+  let pkg_info = a:package isnot v:null ? a:package : self.GetCurrentPackage()
   if type(pkg_info) != v:t_list
     let pkg = v:null
   else
     let pkg = pkg_info[0]
   endif
-  return s:EmacsRex(a:cmd, pkg, self.GetCurrentThread())
+  return s:EmacsRex(a:cmd, pkg,
+        \ a:thread isnot v:null ? a:thread : self.GetCurrentThread())
 endfunction
 
 ""
@@ -534,6 +538,7 @@ endfunction
 "
 " When the debugger is active, invoke the ABORT restart.
 function! nvlime#SLDBAbort(Callback = v:null) dict
+  call nvlime#ui#transcript#OnInvokeRestart(self, 'ABORT')
   call self.Send(self.EmacsRex([s:SYM('SWANK', 'SLDB-ABORT')]),
         \ function('s:SLDBSendCB', [self, a:Callback, 'nvlime#SLDBAbort']))
 endfunction
@@ -555,6 +560,7 @@ endfunction
 "
 " When the debugger is active, invoke the CONTINUE restart.
 function! nvlime#SLDBContinue(Callback = v:null) dict
+  call nvlime#ui#transcript#OnInvokeRestart(self, 'CONTINUE')
   call self.Send(self.EmacsRex([s:SYM('SWANK', 'SLDB-CONTINUE')]),
         \ function('s:SLDBSendCB', [self, a:Callback, 'nvlime#SLDBContinue']))
 endfunction
@@ -623,6 +629,7 @@ endfunction
 " {restart} should be a valid restart number, and {level} a valid debugger
 " level.
 function! nvlime#InvokeNthRestartForEmacs(level, restart, Callback = v:null) dict
+  call nvlime#ui#transcript#OnInvokeRestart(self, a:restart, a:level)
   call self.Send(self.EmacsRex(
         \ [s:SYM('SWANK', 'INVOKE-NTH-RESTART-FOR-EMACS'), a:level, a:restart]),
         \ function('s:SLDBSendCB', [self, a:Callback, 'nvlime#InvokeNthRestartForEmacs']))
@@ -681,12 +688,28 @@ endfunction
 "
 " When the debugger is active, evaluate {str} in {package}, and within the
 " context of {frame}.
-function! nvlime#EvalStringInFrame(str, frame, package, Callback = v:null) dict
-  call self.Send(self.EmacsRex(
+"
+" swank formats the result for display and needs to be told how much room it
+" has: [lines] and [width] cap the printed value, which swank truncates with
+" " ... " once it exceeds [lines] * [width] characters. Both are required by
+" SWANK:EVAL-STRING-IN-FRAME. When either is omitted they are sized to the
+" window the result will be written to, via
+" @function(nvlime#ui#ValueFormatSize).
+"
+" [echo] is written to the REPL when the evaluation starts, see
+" @function(nvlime#ui#transcript#Send).
+function! nvlime#EvalStringInFrame(str, frame, package, Callback = v:null,
+      \ lines = v:null, width = v:null, echo = v:null) dict
+  let [def_lines, def_width] = nvlime#ui#ValueFormatSize()
+  let lines = a:lines is v:null ? def_lines : a:lines
+  let width = a:width is v:null ? def_width : a:width
+
+  call nvlime#ui#transcript#Send(self, self.EmacsRex(
         \ [s:SYM('SWANK', 'EVAL-STRING-IN-FRAME'),
-        \ a:str, a:frame, a:package]),
+        \ a:str, a:frame, a:package, lines, width]),
         \ function('nvlime#SimpleSendCB',
-        \ [self, a:Callback, 'nvlime#EvalStringInFrame']))
+        \ [self, a:Callback, 'nvlime#EvalStringInFrame']),
+        \ a:echo)
 endfunction
 
 ""
@@ -1156,6 +1179,8 @@ endfunction
 
 function! nvlime#OnNewPackage(conn, msg)
   call a:conn.SetCurrentPackage([a:msg[1], a:msg[2]])
+  " Only the REPL sends this, when what it evaluated changed *PACKAGE*.
+  let a:conn['repl_package'] = [a:msg[1], a:msg[2]]
 endfunction
 
 function! nvlime#OnDebug(conn, msg)

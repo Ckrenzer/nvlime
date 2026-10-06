@@ -73,6 +73,10 @@
    :autodoc {:enabled false
              :max_level 5
              :max_lines 50}
+   ;; How many lines' worth of output swank may print for a value evaluated
+   ;; in a debugger frame before it truncates it. The matching width is taken
+   ;; from the repl window, see `nvlime#ui#ValueFormatSize`.
+   :frame_eval {:max_lines 6}
    :main_window {:position "right"
                  :size ""}
    :floating_window {:border "single"

@@ -1,9 +1,14 @@
 let g:nvlime_input_history = []
 
-function! nvlime#ui#input#FromBuffer(conn, prompt, init_val, complete_cb)
+" Show an input window. {complete_cb} runs when the input is submitted with
+" <CR>. Closing the window any other way cancels: [cancel_cb] runs instead,
+" or, when it is omitted, 'Canceled.' is shown.
+function! nvlime#ui#input#FromBuffer(conn, prompt, init_val, complete_cb,
+      \ cancel_cb = v:null)
   let [_, bufnr] = luaeval('require"nvlime.window.input".open(_A[1], _A[2])',
         \ [a:init_val, { 'conn-name': a:conn.cb_data.name, 'prompt': a:prompt}])
   call setbufvar(bufnr, 'nvlime_input_complete_cb', a:complete_cb)
+  call setbufvar(bufnr, 'nvlime_input_cancel_cb', a:cancel_cb)
   call cursor('$', len(getline('$')) + 1)
 endfunction
 
@@ -46,17 +51,57 @@ function! nvlime#ui#input#FromBufferComplete()
   let Callback = getbufvar(buf, 'nvlime_input_complete_cb', v:null)
   if Callback is v:null | return | endif
 
-  if len(nvlime#ui#CurBufferContent()) > 0
-    call nvlime#ui#input#SaveHistory(nvlime#ui#CurBufferContent(v:true))
-  endif
-  if mode() == 'i'
-    stopinsert
-  endif
-  call Callback()
+  " Retire the callback *before* running it. Deleting the buffer below wipes
+  " the input window, which fires the WinClosed autocmd that
+  " `nvlime.window.input` registers, which calls
+  " nvlime#ui#input#FromBufferCancel(). With the callback gone, that finds
+  " the input already handled and does nothing.
+  call setbufvar(buf, 'nvlime_input_complete_cb', v:null)
 
-  if bufloaded(buf)
-    call nvim_buf_delete(buf, { 'force': v:true })
-  endif
+  try
+    if len(nvlime#ui#CurBufferContent()) > 0
+      call nvlime#ui#input#SaveHistory(nvlime#ui#CurBufferContent(v:true))
+    endif
+    if mode() == 'i'
+      stopinsert
+    endif
+    call Callback()
+  finally
+    " Tear the input buffer down even when the callback threw. Its callback
+    " is already retired, so leaving the buffer around would strand the user
+    " in a window whose submit key silently does nothing.
+    if bufloaded(buf)
+      " Errors here are swallowed on purpose: this runs while an exception
+      " from the callback may still be propagating, and that one is the one
+      " worth seeing.
+      silent! call nvim_buf_delete(buf, { 'force': v:true })
+    endif
+  endtry
+endfunction
+
+" Called when the input window {buf} closes. If the input was not submitted
+" first, closing the window is a cancel: by |:q|, by `q`, by moving to
+" another window, or by anything else that closes it.
+function! nvlime#ui#input#FromBufferCancel(buf)
+  let Callback = getbufvar(a:buf, 'nvlime_input_complete_cb', v:null)
+  if Callback is v:null | return | endif
+  call setbufvar(a:buf, 'nvlime_input_complete_cb', v:null)
+
+  try
+    if mode() == 'i'
+      stopinsert
+    endif
+    let CancelCB = getbufvar(a:buf, 'nvlime_input_cancel_cb', v:null)
+    if CancelCB is v:null
+      call nvlime#ui#ErrMsg('Canceled.')
+    else
+      call CancelCB()
+    endif
+  finally
+    if bufloaded(a:buf)
+      silent! call nvim_buf_delete(a:buf, { 'force': v:true })
+    endif
+  endtry
 endfunction
 
 function! nvlime#ui#input#SaveHistory(text)

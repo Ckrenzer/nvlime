@@ -239,10 +239,19 @@ endfunction
 "
 " Evaluate [content] in the REPL and show the result in the REPL buffer. If
 " [content] is omitted, or [edit] is present and |TRUE|, show an input buffer.
+" [content] can also be a list of the text and its beginning and ending
+" positions in the current buffer, as @function(nvlime#ui#CurExpr) returns
+" it. The REPL then shows the text with the indentation it has there.
 function! nvlime#plugin#SendToREPL(content = v:null, edit = v:false)
   let conn = nvlime#connection#Get()
   if conn isnot v:null
-    let [content, default] = s:InputCheckEditFlag(a:edit, a:content)
+    let content = a:content
+    " Pass on just the text when it is going into the input buffer, or when
+    " it is empty, so that an empty send still repeats the last input.
+    if type(content) == v:t_list && (a:edit || empty(content[0]))
+      let content = content[0]
+    endif
+    let [content, default] = s:InputCheckEditFlag(a:edit, content)
     call nvlime#ui#input#MaybeInput(
           \ content,
           \ function('s:SendToREPLInputComplete', [conn]),
@@ -440,8 +449,7 @@ function! nvlime#plugin#LoadFile(file_name = v:null, edit = v:false)
   endif
   call nvlime#ui#input#MaybeInput(
         \ file_name,
-        \ { fname ->
-        \ conn.LoadFile(fname, function('s:OnLoadFileComplete', [fname]))},
+        \ function('s:LoadFileInputComplete', [conn]),
         \ ' Load file ',
         \ default,
         \ v:null,
@@ -492,10 +500,12 @@ function! nvlime#plugin#ShowOperatorArgList(op = v:null, edit = v:false)
   let conn = nvlime#connection#Get(v:true)
   if conn isnot v:null
     let [operator, default] = s:InputCheckEditFlag(a:edit, a:op)
+    let from_insert = s:InInsertMode()
     call nvlime#ui#input#MaybeInput(
           \ operator,
           \ { op ->
-          \ conn.OperatorArgList(op, function('s:OnOperatorArgListComplete', [op]))},
+          \ conn.OperatorArgList(op,
+          \ function('s:OnOperatorArgListComplete', [op, from_insert]))},
           \ ' Arglist for operator ',
           \ default,
           \ conn)
@@ -528,7 +538,8 @@ function! nvlime#plugin#CurAutodoc()
           let margin -= &numberwidth
         endif
         call conn.Autodoc(quoted_raw_form, margin,
-              \ function('s:OnCurAutodocComplete', [raw_form]))
+              \ function('s:OnCurAutodocComplete',
+              \ [raw_form, s:InInsertMode()]))
       else
         call nvlime#ui#ShowArgList(conn, cached_result)
       endif
@@ -856,6 +867,10 @@ endfunction
 
 let s:key_timer = 0
 function! s:SpaceEnter(id)
+  " The timer can fire after the user has already left insert mode.
+  if !s:InInsertMode()
+    return
+  endif
   if g:nvlime_options.autodoc.enabled
     call nvlime#plugin#CurAutodoc()
   else
@@ -1015,8 +1030,8 @@ function! nvlime#plugin#InteractionMode(...)
   let enable = get(a:000, 0, !getbufvar(bufnr('%'), 'nvlime_interaction_mode', v:false))
   if enable
     let b:nvlime_interaction_mode = v:true
-    nnoremap <buffer> <silent> <cr> :call nvlime#plugin#SendToREPL(nvlime#ui#CurExprOrAtom())<cr>
-    vnoremap <buffer> <silent> <cr> :<c-u>call nvlime#plugin#SendToREPL(nvlime#ui#CurSelection())<cr>
+    nnoremap <buffer> <silent> <cr> :call nvlime#plugin#SendToREPL(nvlime#ui#CurExprOrAtom(v:true))<cr>
+    vnoremap <buffer> <silent> <cr> :<c-u>call nvlime#plugin#SendToREPL(nvlime#ui#CurSelection(v:true))<cr>
   else
     let b:nvlime_interaction_mode = v:false
     nnoremap <buffer> <cr> <cr>
@@ -1127,16 +1142,20 @@ function! s:OnSimpleCompletionsComplete(col, cur_pos, conn, result)
   endtry
 endfunction
 
-function! s:OnOperatorArgListComplete(sym, conn, result)
+function! s:OnOperatorArgListComplete(sym, from_insert, conn, result)
   if a:result is v:null | return | endif
+  if s:ArgListIsStale(a:from_insert) | return | endif
 
-  call luaeval('require"nvlime.window.arglist".show(_A)', a:result)
+  call nvlime#ui#ShowArgList(a:conn, a:result)
   let s:last_imode_arglist_op = a:sym
 endfunction
 
-function! s:OnCurAutodocComplete(raw_form, conn, result)
+function! s:OnCurAutodocComplete(raw_form, from_insert, conn, result)
   if type(a:result) == v:t_list && type(a:result[0]) == v:t_string
-    call nvlime#ui#ShowArgList(a:conn, a:result[0])
+    let stale = s:ArgListIsStale(a:from_insert)
+    if !stale
+      call nvlime#ui#ShowArgList(a:conn, a:result[0])
+    endif
     if a:result[1] isnot v:null && a:result[1]
       let autodoc_cache = get(s:, 'autodoc_cache', {})
       let cache_limit = 1024
@@ -1150,7 +1169,9 @@ function! s:OnCurAutodocComplete(raw_form, conn, result)
       let autodoc_cache[string(a:raw_form)] = a:result[0]
       let s:autodoc_cache = autodoc_cache
     endif
-    let s:last_imode_arglist_op = a:raw_form
+    if !stale
+      let s:last_imode_arglist_op = a:raw_form
+    endif
   endif
 endfunction
 
@@ -1271,28 +1292,57 @@ function! s:ShowAsyncResult(conn, result)
   call luaeval('require"nvlime.window.macroexpand".open(_A)', a:result)
 endfunction
 
+function! s:WriteSeparator(conn)
+  let [sep, sep_type] = nvlime#ui#transcript#Separator()
+  call a:conn.ui.OnWriteString(a:conn, sep, sep_type)
+endfunction
+
+" The REPL shows the code above its output and results, after a prompt
+" naming the package it is evaluated in, the way a terminal REPL does. The
+" code waits its turn if the REPL is busy or in the debugger.
 function! s:SendToREPLInputComplete(conn, content)
-  call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  if type(a:content) == v:t_list
+    let str = a:content[0]
+    let shown = nvlime#ui#transcript#Dedent(str, a:content[1])
+  else
+    let str = a:content
+    let shown = str
+  endif
+
+  " Built when the code starts, since the code before it may have changed
+  " the package the prompt names.
+  let conn = a:conn
+  let Echo = {-> [
+        \ nvlime#ui#transcript#Separator(),
+        \ [nvlime#ui#transcript#Prefix(nvlime#ui#transcript#Prompt(conn), shown)
+        \ . "\n", {'name': 'REPL-INPUT', 'package': 'KEYWORD'}]]}
   call a:conn.WithThread({'name': 'REPL-THREAD', 'package': 'KEYWORD'},
-        \ function(a:conn.ListenerEval, [a:content, function('s:OnListenerEvalComplete')]))
+        \ function(a:conn.ListenerEval,
+        \ [str, function('s:OnListenerEvalComplete'), v:null, Echo, shown]))
 endfunction
 
 function! s:CompileInputComplete(conn, win, policy, content)
   if type(a:content) == v:t_list
     let str = a:content[0]
     let [str_line, str_col] = a:content[1]
+    let shown = nvlime#ui#transcript#Dedent(str, a:content[1])
 
     let buf = bufnr('%')
     let cur_byte = line2byte(str_line) + str_col - 1
     let cur_file = expand('%:p')
   elseif type(a:content) == v:t_string
     let str = a:content
+    let shown = str
   endif
 
   let policy = a:policy isnot v:null ? a:policy :
         \ get(g:nvlime_options, 'compiler_policy', v:null)
 
-  call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  " Compiling runs in a thread of its own, alongside the REPL thread, so
+  " there is no order to keep and the code is written right away.
+  call s:WriteSeparator(a:conn)
+  call a:conn.ui.OnWriteString(a:conn, "; compile:\n" . shown . "\n",
+        \ {'name': 'COMPILE-INPUT', 'package': 'KEYWORD'})
 
   if type(a:content) == v:t_string
     call a:conn.CompileStringForEmacs(
@@ -1309,9 +1359,24 @@ function! s:CompileFileInputComplete(conn, win, policy, load, file_name)
   let policy = a:policy isnot v:null ? a:policy :
         \ get(g:nvlime_options, 'compiler_policy', v:null)
 
-  call a:conn.ui.OnWriteString(a:conn, "--\n", {'name': 'REPL-SEP', 'package': 'KEYWORD'})
+  " Only the file name is sent. Lisp reads the file itself.
+  call s:WriteSeparator(a:conn)
+  call a:conn.ui.OnWriteString(a:conn,
+        \ '; ' . (a:load ? 'compile and load' : 'compile') . ' file: '
+        \ . a:file_name . "\n",
+        \ {'name': 'COMPILE-INPUT', 'package': 'KEYWORD'})
   call a:conn.CompileFileForEmacs(a:file_name, a:load, policy,
         \ function('s:OnCompilationComplete', [a:win]))
+endfunction
+
+" Like compiling, loading runs in a thread of its own, so the file name is
+" written right away.
+function! s:LoadFileInputComplete(conn, file_name)
+  call s:WriteSeparator(a:conn)
+  call a:conn.ui.OnWriteString(a:conn, '; load file: ' . a:file_name . "\n",
+        \ {'name': 'LOAD-FILE-INPUT', 'package': 'KEYWORD'})
+  call a:conn.LoadFile(a:file_name,
+        \ function('s:OnLoadFileComplete', [a:file_name]))
 endfunction
 
 function! s:UninternSymbolInputComplete(conn, sym)
@@ -1349,6 +1414,17 @@ if !exists('s:last_imode_arglist_op')
   let s:last_imode_arglist_op = ''
 endif
 
+function! s:InInsertMode()
+  return mode() =~# '^[iR]'
+endfunction
+
+" An arglist asked for while typing arrives asynchronously, and may do so
+" after the user has pressed <Esc>. Showing it then would leave a popup that
+" nothing closes, since leaving insert mode is what closes it.
+function! s:ArgListIsStale(from_insert)
+  return a:from_insert && !s:InInsertMode()
+endfunction
+
 function! s:NeedToShowArgList(op)
   if !g:nvlime_options.arglist.enabled
     return
@@ -1357,8 +1433,10 @@ function! s:NeedToShowArgList(op)
   " Note that {op} may be a string or a list
   if len(a:op) > 0
     let arglist_buf = bufnr(nvlime#ui#ArgListBufName())
-    let arglist_win_nr = bufwinnr(arglist_buf)
-    let arglist_visible = (arglist_win_nr >= 0)
+    " bufwinid(), not bufwinnr(): the arglist popup is a float opened with
+    " focusable=false, and Neovim gives such windows no window number.
+    let arglist_win = bufwinid(arglist_buf)
+    let arglist_visible = (arglist_win > 0)
     if !arglist_visible || type(a:op) != type(s:last_imode_arglist_op) ||
           \ a:op != s:last_imode_arglist_op
       return !!v:true
@@ -1367,7 +1445,7 @@ function! s:NeedToShowArgList(op)
       if conn is v:null
         " The current buffer doesn't have an active connection.
         " Close the arglist window explicitly, to avoid confusion.
-        execute arglist_win_nr . 'wincmd c'
+        call nvim_win_close(arglist_win, v:true)
         return !!v:false
       else
         " If the current connection is different with the connection

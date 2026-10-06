@@ -75,16 +75,27 @@ window wasn't the focused one as it closed."
                                            config.conn-name config.thread))]
 
     (when exists?
-      (let [buf-level (or (nvim_buf_get_var bufnr "nvlime_sldb_level")
-                          -1)]
+      ;; `nvim_buf_get_var` *throws* when the variable was never set instead
+      ;; of returning nil, so the fallback has to come off a `pcall`.
+      (let [(has-level? level) (pcall nvim_buf_get_var bufnr
+                                      "nvlime_sldb_level")
+            buf-level (if has-level? level -1)]
         (when (= buf-level config.level)
           (main.sldb:remove-buf bufnr)
           (buffer.fill! bufnr [])
           (buffer.set-vars bufnr {:buflisted false})
-          (if (not (psl.empty? main.sldb.buffers))
+          (if (not (pwin.visible? main.sldb.id))
+              ;; The window can already be gone: closed by hand, or by
+              ;; `window.close-all`. Neither touching nor closing it is
+              ;; valid then - a later `sldb.open` brings it back with
+              ;; whatever buffers are left.
+              nil
+
+              (not (psl.empty? main.sldb.buffers))
               (nvim_win_set_buf
                 main.sldb.id (. main.sldb.buffers
                                 (length main.sldb.buffers)))
+
               (nvim_win_close main.sldb.id true)))))))
 
 ;;; string {any} -> [WinID BufNr]
